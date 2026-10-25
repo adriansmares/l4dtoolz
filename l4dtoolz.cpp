@@ -190,7 +190,7 @@ void l4dtoolz::ClientSettingsChanged(edict_t *pEdict)
 
 PLUGIN_RESULT l4dtoolz::ClientConnect(bool *bAllowConnect, edict_t *pEntity, const char *, const char *, char *, int) {
     if (sv_steam_bypass.GetInt() != 1) return PLUGIN_CONTINUE;
-    ValidateAuthTicketResponse_t rsp = {g_engine->GetClientXUID(pEntity)};
+    ValidateAuthTicketResponse_t rsp = {{g_engine->GetClientXUID(pEntity)}};
     CALL(void, authrsp_org, void *)(steam3_ptr, &rsp);
     if (g_engine->GetPlayerUserId(pEntity) == -1) {
         *bAllowConnect = false;

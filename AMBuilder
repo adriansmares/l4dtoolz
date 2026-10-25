@@ -1,0 +1,21 @@
+# vim: set sts=2 ts=8 sw=2 tw=99 et ft=python:
+import os
+
+project = builder.LibraryProject('l4dtoolz')
+project.sources += [
+  'l4dtoolz.cpp',
+  os.path.join('sigtool', 'mem.cpp'),
+]
+
+for sdk_name in L4DToolZ.sdks:
+  sdk = L4DToolZ.sdks[sdk_name]
+  for cxx in builder.targets:
+    if not cxx.target.arch in sdk['platforms'][cxx.target.platform]:
+      continue
+    binary = L4DToolZ.HL2Config(project, cxx, 'l4dtoolz', sdk)
+    binary.compiler.cxxincludes += [
+      builder.currentSourcePath,
+      os.path.join(builder.currentSourcePath, 'sigtool'),
+    ]
+
+L4DToolZ.binaries = builder.Add(project)

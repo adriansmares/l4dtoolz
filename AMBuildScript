@@ -1,0 +1,176 @@
+# vim: set sts=2 ts=8 sw=2 tw=99 et ft=python:
+# Compiler and linker flags follow SourceMod's AMBuildScript, so that l4dtoolz is built the same way as SourceMod.
+import os
+
+def ResolveEnvPath(env, folder):
+  if env in os.environ:
+    path = os.environ[env]
+    if os.path.isdir(path):
+      return path
+    return None
+
+  head = os.getcwd()
+  oldhead = None
+  while head != None and head != oldhead:
+    path = os.path.join(head, folder)
+    if os.path.isdir(path):
+      return path
+    oldhead = head
+    head, tail = os.path.split(head)
+
+  return None
+
+if not builder.options.hl2sdk_manifest:
+  raise Exception('HL2SDK Manifest root path not set! (--hl2sdk-manifest-path)')
+SdkHelpers = builder.Eval(os.path.join(builder.options.hl2sdk_manifest, 'SdkHelpers.ambuild'), {
+  'Project': 'l4dtoolz'
+})
+
+class L4DToolZConfig(object):
+  def __init__(self):
+    self.sdks = {}
+    self.sdk_manifests = []
+    self.all_targets = []
+
+    target_archs = builder.options.targets.split(',') if builder.options.targets else ['x86']
+    for arch in target_archs:
+      self.all_targets.append(builder.DetectCxx(target_arch = arch))
+
+  @property
+  def tag(self):
+    if builder.options.debug == '1':
+      return 'Debug'
+    return 'Release'
+
+  def findSdkPath(self, sdk_name):
+    dir_name = 'hl2sdk-{}'.format(sdk_name)
+    if builder.options.hl2sdk_root:
+      sdk_path = os.path.join(builder.options.hl2sdk_root, dir_name)
+      if os.path.exists(sdk_path):
+        return sdk_path
+    return ResolveEnvPath('HL2SDK{}'.format(sdk_name.upper()), dir_name)
+
+  def detectSDKs(self):
+    sdk_list = [s for s in builder.options.sdks.split(',') if s]
+    SdkHelpers.sdk_filter = lambda sdk: not sdk.get('source2', False)
+    SdkHelpers.find_sdk_path = self.findSdkPath
+    SdkHelpers.findSdks(builder, self.all_targets, sdk_list)
+    self.sdks = SdkHelpers.sdks
+    self.sdk_manifests = SdkHelpers.sdk_manifests
+
+  def configure(self):
+    for cxx in self.all_targets:
+      if cxx.like('gcc'):
+        self.configure_gcc(cxx)
+      elif cxx.family == 'msvc':
+        self.configure_msvc(cxx)
+
+      if builder.options.opt == '1':
+        cxx.defines += ['NDEBUG']
+      if builder.options.debug == '1':
+        cxx.defines += ['DEBUG', '_DEBUG']
+
+      if cxx.target.platform == 'linux':
+        self.configure_linux(cxx)
+      elif cxx.target.platform == 'windows':
+        self.configure_windows(cxx)
+
+  def configure_gcc(self, cxx):
+    cxx.defines += [
+      'stricmp=strcasecmp',
+      '_stricmp=strcasecmp',
+      '_snprintf=snprintf',
+      '_vsnprintf=vsnprintf',
+      'HAVE_STDINT_H',
+      'GNUC',
+    ]
+    cxx.cflags += [
+      '-pipe',
+      '-fno-strict-aliasing',
+      '-Wall',
+      '-Werror',
+      '-Wno-unused',
+      '-Wno-switch',
+      '-Wno-array-bounds',
+      '-Wno-unknown-pragmas',
+      '-Wno-dangling-else',
+      '-fvisibility=hidden',
+    ]
+    if cxx.target.arch in ['x86', 'x86_64']:
+      cxx.cflags += ['-msse']
+    cxx.cxxflags += [
+      '-fno-threadsafe-statics',
+      '-Wno-non-virtual-dtor',
+      '-Wno-overloaded-virtual',
+      '-Wno-register',
+      '-fvisibility-inlines-hidden',
+      '-std=c++17',
+    ]
+    if cxx.family == 'clang':
+      cxx.cxxflags += [
+        '-Wno-expansion-to-defined',
+        '-Wno-inconsistent-missing-override',
+        '-Wno-null-dereference',
+        '-Wno-delete-non-virtual-dtor',
+        '-Wno-implicit-exception-spec-mismatch',
+        '-Wno-deprecated-register',
+      ]
+      cxx.cflags += [
+        '-Wno-narrowing',
+        '-Wno-sometimes-uninitialized',
+        '-Wno-implicit-int-float-conversion',
+        '-Wno-tautological-overlap-compare',
+      ]
+      if cxx.version >= 'clang-21.0':
+        cxx.cflags += ['-Wno-uninitialized-const-pointer']
+    if builder.options.opt == '1':
+      cxx.cflags += ['-O3']
+    cxx.cflags += ['-fno-omit-frame-pointer']
+
+  def configure_msvc(self, cxx):
+    if builder.options.debug == '1':
+      cxx.cflags += ['/MTd']
+      cxx.linkflags += ['/NODEFAULTLIB:libcmt']
+    else:
+      cxx.cflags += ['/MT']
+    cxx.defines += [
+      '_CRT_SECURE_NO_DEPRECATE',
+      '_CRT_SECURE_NO_WARNINGS',
+      '_CRT_NONSTDC_NO_DEPRECATE',
+      '_ITERATOR_DEBUG_LEVEL=0',
+    ]
+    cxx.cflags += ['/W3']
+    cxx.cxxflags += ['/EHsc', '/GR-', '/TP', '/std:c++17']
+    cxx.linkflags += ['kernel32.lib', 'user32.lib', 'advapi32.lib', 'psapi.lib']
+    if builder.options.opt == '1':
+      cxx.cflags += ['/Ox', '/Zo']
+      cxx.linkflags += ['/OPT:ICF', '/OPT:REF']
+    if builder.options.debug == '1':
+      cxx.cflags += ['/Od', '/RTC1']
+    cxx.cflags += ['/Oy-']
+
+  def configure_linux(self, cxx):
+    cxx.defines += ['LINUX', '_LINUX', 'POSIX', '_FILE_OFFSET_BITS=64']
+    cxx.linkflags += ['-lm', '-ldl']
+    if cxx.family == 'gcc':
+      cxx.linkflags += ['-static-libgcc']
+    elif cxx.family == 'clang':
+      cxx.linkflags += ['-lgcc_eh']
+    cxx.linkflags += ['-static-libstdc++']
+
+  def configure_windows(self, cxx):
+    cxx.defines += ['WIN32', '_WINDOWS']
+
+  def HL2Config(self, project, compiler, name, sdk):
+    binary = project.Configure(compiler, name, '{0} - {1} {2}'.format(self.tag, sdk['name'], compiler.target.arch))
+    for other_sdk in self.sdk_manifests:
+      binary.compiler.defines += ['SE_{}={}'.format(other_sdk['define'], other_sdk['code'])]
+    SdkHelpers.configureCxx(builder, binary, sdk)
+    return binary
+
+L4DToolZ = L4DToolZConfig()
+L4DToolZ.detectSDKs()
+L4DToolZ.configure()
+
+builder.targets = builder.CloneableList(L4DToolZ.all_targets)
+builder.Build(['AMBuilder', 'PackageScript'], {'L4DToolZ': L4DToolZ})
