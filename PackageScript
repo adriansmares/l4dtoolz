@@ -3,7 +3,10 @@ import os
 
 builder.SetBuildFolder('package')
 
+# l4dtoolz is a Valve server plugin rather than a Metamod plugin, so the engine loads it from addons/l4dtoolz.vdf.
 addons = builder.AddFolder('addons')
 builder.AddCopy(os.path.join(builder.sourcePath, 'l4dtoolz.vdf'), addons)
-for task in L4DToolZ.binaries:
-  builder.AddCopy(task.binary, addons)
+
+for task in MMSPlugin.tasks:
+  (_, binary_name) = os.path.split(task.binary.path)
+  builder.AddCopy(task.binary, os.path.join('addons', MMSPlugin.metadata['name'] + os.path.splitext(binary_name)[1]))

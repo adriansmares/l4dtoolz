@@ -1,21 +1,23 @@
 # vim: set sts=2 ts=8 sw=2 tw=99 et ft=python:
 import os
 
-project = builder.LibraryProject('l4dtoolz')
-project.sources += [
-  'l4dtoolz.cpp',
-  os.path.join('sigtool', 'mem.cpp'),
-]
+project = builder.LibraryProject(MMSPlugin.metadata['name'])
 
-for sdk_name in L4DToolZ.sdks:
-  sdk = L4DToolZ.sdks[sdk_name]
-  for cxx in builder.targets:
-    if not cxx.target.arch in sdk['platforms'][cxx.target.platform]:
-      continue
-    binary = L4DToolZ.HL2Config(project, cxx, 'l4dtoolz', sdk)
-    binary.compiler.cxxincludes += [
-      builder.currentSourcePath,
-      os.path.join(builder.currentSourcePath, 'sigtool'),
-    ]
+for sdk_target in MMSPlugin.sdk_targets:
+  sdk = sdk_target.sdk
+  cxx = sdk_target.cxx
 
-L4DToolZ.binaries = builder.Add(project)
+  binary = MMSPlugin.HL2Library(builder, cxx, project, sdk)
+
+  binary.sources += [
+    'l4dtoolz.cpp',
+    'sigtool/mem.cpp',
+  ]
+  binary.compiler.cxxincludes += [
+    os.path.join(builder.currentSourcePath, 'sigtool'),
+  ]
+  # Exception: carried over from upstream's Makefile, for dlopen and friends.
+  if cxx.target.platform == 'linux':
+    binary.compiler.linkflags += ['-ldl']
+
+MMSPlugin.tasks += builder.Add(project)
