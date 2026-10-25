@@ -1,115 +1,120 @@
-name: l4dtoolz
-
+# Builds the extension the same way SourceMod builds its own releases (sourcemod/.github/workflows/build-release.yml):
+# the AlliedModders build container on Linux, MSVC on Windows, and AMBuild with pinned SourceMod, Metamod:Source and
+# HL2SDK sources. Every push to main publishes a release.
+name: Build
 on:
   push:
-    tags:
-      - '*'
-
-permissions:
-  contents: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+env:
+  # Left 4 Dead 2 dedicated servers are 32-bit only.
+  ARCH: x86
+  # SourceMod 1.13.0.7299.
+  SOURCEMOD_REF: 2e395c67870e0725cb8ad211be8bd881e83bccf3
+  # Metamod:Source 1.12.0.1228. SourceMod builds against the 1.12-dev branch (tools/checkout-deps.sh).
+  MMSOURCE_REF: cb47755826fad1483291e5dc00222aa64303d12f
+  # alliedmodders/hl2sdk, l4d2 branch.
+  HL2SDK_REF: 2a31cd007b2d7d2f964dc093eedcf7a812cf9dd6
+  HL2SDK_MANIFESTS_REF: 931f7aa57823c3bcf34f1867e28d8d12769a8ba7
+  # The Linux container ships its own AMBuild; Windows installs this one.
+  AMBUILD_REF: d89ec91a7ac2607da07b50bb62346f9a10e9a998
 jobs:
-  build_linux:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        branch: [main, '2155']
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          repository: lakwsh/hl2sdk-l4d2
-          path: hl2sdk-l4d2
-      - uses: actions/checkout@v6
-        with:
-          submodules: 'true'
-          path: l4dtoolz
-          ref: ${{ matrix.branch }}
-      - name: Build L4DToolZ
-        working-directory: l4dtoolz
-        run: |
-          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/l4dtoolz ubuntu:16.04 bash -c "
-            dpkg --add-architecture i386 &&
-            apt update &&
-            apt install -y gcc-5-multilib g++-5-multilib make &&
-            make all
-          "
-      - uses: actions/upload-artifact@v6
-        with:
-          name: linux-${{ matrix.branch }}
-          path: l4dtoolz/Release/l4dtoolz.so
-          retention-days: 1
-          if-no-files-found: error
-
-  build_windows:
-    runs-on: windows-2022
-    strategy:
-      fail-fast: false
-      matrix:
-        branch: [main, '2155']
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          repository: lakwsh/hl2sdk-l4d2
-          path: hl2sdk-l4d2
-      - uses: actions/checkout@v6
-        with:
-          submodules: 'true'
-          path: l4dtoolz
-          ref: ${{ matrix.branch }}
-      - uses: microsoft/setup-msbuild@v3
-      - name: Build hl2sdk
-        working-directory: hl2sdk-l4d2
-        run: msbuild tier1\tier1-2005.vcxproj /p:Configuration=Release /p:Platform=Win32 -maxcpucount
-      - name: Build L4DToolZ
-        working-directory: l4dtoolz
-        run: msbuild l4dtoolz.vcxproj /p:Configuration=Release /p:Platform=Win32 -maxcpucount
-      - uses: actions/upload-artifact@v6
-        with:
-          name: windows-${{ matrix.branch }}
-          path: l4dtoolz/Release/l4dtoolz.dll
-          retention-days: 1
-          if-no-files-found: error
-
-  release:
-    needs: [build_linux, build_windows]
-    runs-on: ubuntu-latest
+  build:
     permissions:
       contents: write
+    strategy:
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+            python: python
+          - platform: linux
+            os: ubuntu-latest
+            python: python3
+            container_image: ghcr.io/alliedmodders/build-containers/debian11-clang22@sha256:eabe742aa7dfd5af548248ae4538ae2b03a38ceb7939ce8bd391d4374af3f02c
+      fail-fast: false
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    container:
+      image: ${{ matrix.container_image }}
     steps:
-      - uses: actions/download-artifact@v7
+      # The container runs as root, while the workspace belongs to the runner user.
+      - name: Trust the workspace
+        shell: bash
+        run: git config --global --add safe.directory '*'
+
+      - name: Checkout
+        uses: actions/checkout@v7
         with:
-          path: artifacts
-      - uses: actions/checkout@v6
+          path: extension
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Checkout HL2SDK
+        uses: actions/checkout@v7
         with:
-          ref: main
-          sparse-checkout: |
-            README.md
-            README_EN.md
-          path: docs-main
-      - uses: actions/checkout@v6
+          repository: alliedmodders/hl2sdk
+          ref: ${{ env.HL2SDK_REF }}
+          path: dependencies/hl2sdk-l4d2
+
+      - name: Checkout HL2SDK manifests
+        uses: actions/checkout@v7
         with:
-          ref: '2155'
-          sparse-checkout: |
-            README.md
-            README_EN.md
-          path: docs-2155
-      - name: Package per branch
+          repository: alliedmodders/hl2sdk-manifests
+          ref: ${{ env.HL2SDK_MANIFESTS_REF }}
+          path: dependencies/hl2sdk-manifests
+
+      - name: Install AMBuild
+        if: matrix.platform == 'windows'
+        run: python -m pip install git+https://github.com/alliedmodders/ambuild@${{ env.AMBUILD_REF }}
+
+      - name: Build
+        shell: bash
         run: |
-          wget https://oss.lakwsh.net/l4dtoolz.vdf
-          for branch in main 2155; do
-            mkdir -p pkg/$branch
-            cp artifacts/linux-$branch/l4dtoolz.so pkg/$branch/
-            cp artifacts/windows-$branch/l4dtoolz.dll pkg/$branch/
-            cp l4dtoolz.vdf pkg/$branch/
-            cp docs-$branch/README*.md pkg/$branch/
-            (cd pkg/$branch && zip -r "$GITHUB_WORKSPACE/l4dtoolz-${{ github.ref_name }}-$branch.zip" .)
-          done
-      - uses: softprops/action-gh-release@v3
+          # github.workspace does not match $GITHUB_WORKSPACE in containerized jobs, see https://github.com/actions/runner/issues/2058
+          DEPS="$GITHUB_WORKSPACE/dependencies"
+          mkdir -p extension/build
+          cd extension/build
+          ${{ matrix.python }} ../configure.py --enable-optimize --sdks=l4d2 --hl2sdk-root=$DEPS --hl2sdk-manifest-path=$DEPS/hl2sdk-manifests --targets=${{ env.ARCH }}
+          ambuild
+
+      - name: Package
+        id: package
+        working-directory: extension/build/package
+        shell: bash
+        run: |
+          version="r$(git -C ../.. rev-list --count HEAD)-$(git -C ../.. rev-parse --short=7 HEAD)"
+          filename="l4dtoolz-${version}-${{ matrix.platform }}"
+          if [ "${{ matrix.platform }}" == "windows" ]; then
+            filename="$filename.zip"
+            7z a "$filename" addons
+          else
+            filename="$filename.tar.gz"
+            tar zcf "$filename" addons
+          fi
+          echo "version=$version" >> $GITHUB_OUTPUT
+          echo "filename=$filename" >> $GITHUB_OUTPUT
+
+      - name: Upload package
+        uses: actions/upload-artifact@v7
         with:
-          files: l4dtoolz-${{ github.ref_name }}-*.zip
-          generate_release_notes: true
+          name: ${{ matrix.platform }}
+          path: extension/build/package/${{ steps.package.outputs.filename }}
+
+      - name: Create Release
+        if: github.event_name == 'push'
+        uses: ncipollo/release-action@v1.21.0
+        with:
+          # Windows and Linux packages upload to the same release.
+          allowUpdates: true
+          replacesArtifacts: false
+          omitBodyDuringUpdate: true
+          omitNameDuringUpdate: true
+          artifacts: extension/build/package/${{ steps.package.outputs.filename }}
+          artifactErrorsFailBuild: true
+          tag: ${{ steps.package.outputs.version }}
+          commit: ${{ github.sha }}
+          makeLatest: true
+          token: ${{ secrets.GITHUB_TOKEN }}
