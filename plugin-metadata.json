@@ -1,0 +1,11 @@
+{
+    "name": "l4dtoolz",
+    "alias": "l4dtoolz",
+    "display_name": "L4DToolZ",
+    "description": "Unlocks player limits and other engine restrictions in Left 4 Dead",
+    "author": "lakwsh",
+    "url": "https://github.com/lakwsh/l4dtoolz",
+    "log_tag": "L4DToolZ",
+    "license": "GPL-3.0",
+    "version": "2.5.1.{{git-shorthash}}"
+}
