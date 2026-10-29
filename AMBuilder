@@ -1,0 +1,23 @@
+# vim: set sts=2 ts=8 sw=2 tw=99 et ft=python:
+import os
+
+project = builder.LibraryProject(MMSPlugin.metadata['name'])
+
+for sdk_target in MMSPlugin.sdk_targets:
+  sdk = sdk_target.sdk
+  cxx = sdk_target.cxx
+
+  binary = MMSPlugin.HL2Library(builder, cxx, project, sdk)
+
+  binary.sources += [
+    'l4dtoolz.cpp',
+    'sigtool/mem.cpp',
+  ]
+  binary.compiler.cxxincludes += [
+    os.path.join(builder.currentSourcePath, 'sigtool'),
+  ]
+  # Exception: carried over from upstream's Makefile, for dlopen and friends.
+  if cxx.target.platform == 'linux':
+    binary.compiler.linkflags += ['-ldl']
+
+MMSPlugin.tasks += builder.Add(project)
